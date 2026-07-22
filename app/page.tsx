@@ -158,7 +158,7 @@ export default function Home() {
     <header className="topbar"><a className="brand" href="#top"><GlobeHemisphereWest weight="duotone" size={34} /><b>מסביב לעולם</b></a><span className="parent-note"><Sparkle weight="fill" /> מדריך לכל מדינות העולם</span></header>
     <section className="hero-reference" id="top">
       <h1 className="sr-only">מסביב לעולם — מגלים מדינות בסקרנות</h1>
-      <img src="/og.png" alt="מסביב לעולם — גלובוס צבעוני, מטוס, דגלים וחותמות מסע" />
+      <img src="./og.png" alt="מסביב לעולם — גלובוס צבעוני, מטוס, דגלים וחותמות מסע" />
       <p className="entry-note">בחרו מדינה והתחילו את המסע</p>
     </section>
 
