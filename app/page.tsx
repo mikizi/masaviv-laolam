@@ -7,11 +7,14 @@ import {
   BowlFood,
   Buildings,
   Compass,
+  DiceFive,
+  DiceThree,
   FlagBannerFold,
   GlobeHemisphereWest,
   Lightbulb,
   MagnifyingGlass,
   MapPin,
+  MusicNotes,
   Scroll,
   Sparkle,
   UsersThree,
@@ -47,6 +50,20 @@ type Details = {
   war: WikiSearch;
   history: WikiSearch;
   population: number;
+  anthemName: string;
+  anthemAudio: string;
+  anthemSource: string;
+};
+
+const NATIONAL_DISHES_HE: Record<string, string> = {
+  AR: "אסאדו", AT: "שניצל וינאי", AU: "פאי בשר", BE: "מולים וצ'יפס", BR: "פייז'ואדה",
+  CA: "פוטין", CH: "פונדו", CN: "ברווז פקין", DE: "זאוארברטן", EG: "כושרי",
+  ES: "פאייה", ET: "דורו ואט", FR: "פוט-או-פה", GB: "פיש אנד צ'יפס", GR: "מוסקה",
+  ID: "נאסי גורנג", IL: "פלאפל", IN: "קיצ'רי", IR: "חורשט סבזי", IT: "פיצה",
+  JP: "סושי", KR: "קימצ'י", LB: "קיבה", MA: "קוסקוס", MX: "טאקו",
+  MY: "נאסי למאק", NG: "אורז ג'ולוף", PH: "אדובו", PL: "פירוגי", RU: "פלמני",
+  SA: "כבסה", SE: "קציצות בשר שוודיות", SG: "אורז עוף האינאני", TH: "פאד תאי",
+  TR: "קבב", UA: "בורשט", US: "המבורגר", VN: "פו", ZA: "בובוטי",
 };
 
 const stripHtml = (value = "") => value.replace(/<[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, "&");
@@ -81,31 +98,65 @@ async function wikiSearch(query: string): Promise<WikiSearch> {
   return { title: result.title, snippet: hebrewOnly(stripHtml(result.snippet)), url: `https://he.wikipedia.org/wiki/${encodeURIComponent(result.title.replaceAll(" ", "_"))}` };
 }
 
+async function fetchCountryImage(country: ApiCountry): Promise<string> {
+  const pageTitles = [
+    `Tourism in ${country.name.common}`,
+    `Geography of ${country.name.common}`,
+    country.name.common,
+  ];
+  const summaries = await Promise.all(pageTitles.map((title) =>
+    fetchJson(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`).catch(() => null)
+  ));
+  const blockedArtwork = /flag|coat[_ -]of[_ -]arms|emblem|seal|logo/i;
+  for (const summary of summaries) {
+    const source = summary?.originalimage?.source || summary?.thumbnail?.source || "";
+    if (source && !blockedArtwork.test(source)) return source;
+  }
+  return "";
+}
+
+async function fetchNationalDish(country: ApiCountry): Promise<WikiSearch> {
+  const knownDish = NATIONAL_DISHES_HE[country.cca2];
+  if (knownDish) return wikiSearch(knownDish);
+  const countryHe = hebrewName(country);
+  const result = await wikiSearch(`המטבח של ${countryHe}`);
+  if (result.title !== countryHe) return result;
+  return {
+    title: "לא נמצא מאכל לאומי מוסכם",
+    snippet: "לא לכל מדינה יש מאכל לאומי רשמי אחד. כדאי לבדוק כמה מאכלים מסורתיים שמאפיינים את המטבח המקומי.",
+    url: `https://he.wikipedia.org/w/index.php?search=${encodeURIComponent(`המטבח של ${countryHe}`)}`,
+  };
+}
+
 async function loadDetails(country: ApiCountry): Promise<Details> {
   const countryHe = hebrewName(country);
-  const sparql = `SELECT ?head ?headLabel ?image ?capital ?capitalLabel WHERE { ?country wdt:P297 "${country.cca2}"; wdt:P6 ?head. OPTIONAL { ?head wdt:P18 ?image. } OPTIONAL { ?country wdt:P36 ?capital. } SERVICE wikibase:label { bd:serviceParam wikibase:language "he". } } LIMIT 1`;
+  const sparql = `SELECT ?head ?headLabel ?image ?capital ?capitalLabel ?map ?anthem ?anthemLabel ?anthemAudio WHERE { ?country wdt:P297 "${country.cca2}"; wdt:P6 ?head. OPTIONAL { ?head wdt:P18 ?image. } OPTIONAL { ?country wdt:P36 ?capital. } OPTIONAL { ?country wdt:P242 ?map. } OPTIONAL { ?country wdt:P85 ?anthem. OPTIONAL { ?anthem wdt:P51 ?anthemAudio. } } SERVICE wikibase:label { bd:serviceParam wikibase:language "he". } } LIMIT 1`;
   const leaderRequest = fetchJson(`https://query.wikidata.org/sparql?query=${encodeURIComponent(sparql)}&format=json`, { headers: { Accept: "application/sparql-results+json" } }).catch(() => null);
-  const summaryRequest = fetchJson(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(country.name.common)}`).catch(() => null);
+  const countryImageRequest = fetchCountryImage(country).catch(() => "");
   const populationRequest = fetchJson(`https://api.worldbank.org/v2/country/${country.cca2}/indicator/SP.POP.TOTL?format=json&mrnev=1`).catch(() => null);
-  const [leaderData, summary, populationData, food, war, history] = await Promise.all([
+  const [leaderData, countryImage, populationData, food, war, history] = await Promise.all([
     leaderRequest,
-    summaryRequest,
+    countryImageRequest,
     populationRequest,
-    wikiSearch(`המאכל הלאומי של ${countryHe}`).catch(() => ({ title: "ויקיפדיה", snippet: "לא נמצא מידע זמין כרגע.", url: "https://he.wikipedia.org" })),
+    fetchNationalDish(country).catch(() => ({ title: "מאכל מסורתי", snippet: "לא נמצא מידע זמין כרגע.", url: "https://he.wikipedia.org" })),
     wikiSearch(`מלחמות ${countryHe}`).catch(() => ({ title: "ויקיפדיה", snippet: "לא נמצא מידע זמין כרגע.", url: "https://he.wikipedia.org" })),
     wikiSearch(`ההיסטוריה הצבאית של ${countryHe}`).catch(() => ({ title: "ויקיפדיה", snippet: "לא נמצא מידע זמין כרגע.", url: "https://he.wikipedia.org" })),
   ]);
   const binding = leaderData?.results?.bindings?.[0];
+  const anthemLabel = binding?.anthemLabel?.value || "";
   return {
     leader: binding?.headLabel?.value && !/^Q\d+$/.test(binding.headLabel.value) ? hebrewOnly(binding.headLabel.value) : "לא נמצא שם בעברית",
     leaderImage: binding?.image?.value || "",
     leaderSource: binding?.head?.value || "https://www.wikidata.org",
     capital: binding?.capitalLabel?.value || "לא נמצא במאגר",
-    countryImage: summary?.originalimage?.source || summary?.thumbnail?.source || country.flags.svg,
+    countryImage: countryImage || binding?.map?.value || country.flags.svg,
     food,
     war,
     history,
     population: populationData?.[1]?.[0]?.value || country.population || 0,
+    anthemName: /[\u0590-\u05ff]/.test(anthemLabel) ? anthemLabel : `ההמנון הלאומי של ${countryHe}`,
+    anthemAudio: (binding?.anthemAudio?.value || "").replace(/^http:/, "https:"),
+    anthemSource: binding?.anthem?.value || "https://www.wikidata.org",
   };
 }
 
@@ -121,6 +172,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showHistory, setShowHistory] = useState(false);
+  const [isRolling, setIsRolling] = useState(false);
 
   useEffect(() => {
     fetch("https://raw.githubusercontent.com/mledoze/countries/master/countries.json")
@@ -152,6 +204,16 @@ export default function Home() {
     finally { setLoading(false); }
   }
 
+  function rollRandomCountry() {
+    if (!countries.length || isRolling) return;
+    setIsRolling(true);
+    window.setTimeout(() => {
+      const nextCountry = countries[Math.floor(Math.random() * countries.length)];
+      setIsRolling(false);
+      void chooseCountry(nextCountry);
+    }, 650);
+  }
+
   const fact = country ? `השטח של ${hebrewName(country)} הוא כ־${new Intl.NumberFormat("he-IL").format(Math.round(country.area))} קמ״ר, ומדברים בה ${Object.values(country.languages || {}).length || 1} שפות רשמיות.` : "";
 
   return <main dir="rtl" style={{ "--country": "#2457d6" } as React.CSSProperties}>
@@ -165,8 +227,34 @@ export default function Home() {
     <section className="universal-search" aria-label="חיפוש כל מדינה בעולם">
       <div className="search-shell">
         <MagnifyingGlass className="search-icon" weight="bold" aria-hidden="true" />
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="למשל: יפן, ברזיל, צרפת..." aria-label="הקלידו שם מדינה" autoComplete="off" />
-        {query && <button onClick={() => setQuery("")} aria-label="ניקוי החיפוש"><X weight="bold" /></button>}
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" || suggestions.length === 0) return;
+            e.preventDefault();
+            const normalizedQuery = query.trim().toLowerCase();
+            const match = suggestions.find((item) => hebrewName(item).toLowerCase() === normalizedQuery) || suggestions[0];
+            void chooseCountry(match);
+          }}
+          placeholder="למשל: יפן, ברזיל, צרפת..."
+          aria-label="הקלידו שם מדינה"
+          aria-autocomplete="list"
+          autoComplete="off"
+        />
+        <button
+          className={`random-country-button${isRolling ? " is-rolling" : ""}`}
+          onClick={rollRandomCountry}
+          aria-label={isRolling ? "הקוביות מתגלגלות" : "בחרו מדינה באקראי"}
+          title="מדינה בהפתעה"
+          disabled={!countries.length || isRolling}
+        >
+          <span className="dice-pair" aria-hidden="true">
+            <DiceFive className="die die-one" weight="fill" />
+            <DiceThree className="die die-two" weight="fill" />
+          </span>
+        </button>
+        {query && <button className="clear-search-button" onClick={() => setQuery("")} aria-label="ניקוי החיפוש"><X weight="bold" /></button>}
         {suggestions.length > 0 && <div className="suggestions" role="listbox">{suggestions.map((item) => <button key={item.cca2} onClick={() => chooseCountry(item)} role="option"><img src={item.flags.svg} alt="" /><span><b>{hebrewName(item)}</b></span><ArrowLeft weight="bold" /></button>)}</div>}
         {query && !suggestions.length && countries.length > 0 && <div className="suggestions no-result">לא מצאנו מדינה בשם הזה. נסו איות אחר.</div>}
       </div>
@@ -192,8 +280,9 @@ export default function Home() {
           <div className="portrait-wrap"><User weight="duotone" />{details?.leaderImage && <img src={details.leaderImage} alt={`תמונה של ${details.leader}`} />}</div>
           <div><p className="card-label">מי מנהיג את הממשלה?</p><h3>{details?.leader || (loading ? "בודקים..." : "לא נמצא במאגר")}</h3><a href={details?.leaderSource} target="_blank" rel="noreferrer">למקור הנתונים ↗</a></div>
         </article>
-        <InfoCard icon={<BowlFood weight="duotone" />} label="המאכל הלאומי" wide tone="yellow"><p>{details?.food.snippet || "מחפשים במקורות..."}</p>{details && <a className="source-link" href={details.food.url} target="_blank" rel="noreferrer">למקור המלא ↗</a>}</InfoCard>
+        <InfoCard icon={<BowlFood weight="duotone" />} label="מאכל לאומי או מסורתי" wide tone="yellow"><strong>{details?.food.title || "מחפשים במקורות..."}</strong><p>{details?.food.snippet || "מחפשים תיאור בעברית..."}</p>{details && <a className="source-link" href={details.food.url} target="_blank" rel="noreferrer">למקור המלא ↗</a>}</InfoCard>
         <InfoCard icon={<Lightbulb weight="duotone" />} label="עובדה מעניינת" wide tone="blue"><p>{fact}</p></InfoCard>
+        <InfoCard icon={<MusicNotes weight="duotone" />} label="שומעים את המדינה" wide tone="green"><strong>{details?.anthemName || "מחפשים הקלטה..."}</strong>{details?.anthemAudio ? <audio className="country-audio" controls preload="none" src={details.anthemAudio}>הדפדפן אינו תומך בנגן השמע.</audio> : <p>לא נמצאה כרגע הקלטה חופשית להשמעה.</p>}{details && <a className="source-link" href={details.anthemSource} target="_blank" rel="noreferrer">למקור ההקלטה ↗</a>}</InfoCard>
         <InfoCard icon={<FlagBannerFold weight="duotone" />} label="המלחמה האחרונה" wide tone="red"><p>{details?.war.snippet || "מחפשים במקורות היסטוריים..."}</p>{details && <a className="source-link" href={details.war.url} target="_blank" rel="noreferrer">למקור ההיסטורי ↗</a>}</InfoCard>
         <article className="history-card">
           <div className="history-head"><span className="card-icon"><Scroll weight="duotone" /></span><div><p className="card-label">שאלה מההיסטוריה</p><h3>האם {hebrewName(country)} כבשה פעם מדינה אחרת?</h3></div></div>
